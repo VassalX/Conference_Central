@@ -201,15 +201,18 @@ public class ConferenceApi {
 		return conference;
 	}
 
-	@ApiMethod(
-            name = "queryConferences",
-            path = "queryConferences",
-            httpMethod = HttpMethod.POST
-    )
-    public List<Conference> queryConferences() {
-        Query query = ofy().load().type(Conference.class).order("name");
-        return query.list();
-    }
+	@ApiMethod(name = "queryConferences", path = "queryConferences", httpMethod = HttpMethod.POST)
+	public List<Conference> queryConferences(ConferenceQueryForm conferenceQueryForm) {
+		Iterable<Conference> conferenceIterable = conferenceQueryForm.getQuery();
+		List<Conference> result = new ArrayList<>(0);
+		List<Key<Profile>> organizersKeyList = new ArrayList<>(0);
+		for (Conference conference : conferenceIterable) {
+			organizersKeyList.add(Key.create(Profile.class, conference.getOrganizerUserId()));
+			result.add(conference);
+		}
+		ofy().load().keys(organizersKeyList);
+		return result;
+	}
 
 	@ApiMethod(name = "getConferencesCreated", path = "getConferencesCreated", httpMethod = HttpMethod.POST)
 	public List<Conference> getConferencesCreated(final User user) throws UnauthorizedException, NotFoundException {
