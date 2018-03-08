@@ -6,16 +6,16 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import javax.inject.Named;
-
-import com.google.api.server.spi.response.ConflictException;
-import com.google.api.server.spi.response.ForbiddenException;
-import com.google.api.server.spi.response.NotFoundException;
+import java.util.List;
+import com.googlecode.objectify.cmd.Query;
 import com.googlecode.objectify.cmd.Query;
 import com.google.api.server.spi.config.Api;
 import com.google.api.server.spi.config.ApiMethod;
 import com.google.api.server.spi.config.ApiMethod.HttpMethod;
+import com.google.api.server.spi.response.ConflictException;
+import com.google.api.server.spi.response.ForbiddenException;
+import com.google.api.server.spi.response.NotFoundException;
 import com.google.api.server.spi.response.UnauthorizedException;
-import com.google.appengine.api.datastore.Entity;
 import com.google.appengine.api.users.User;
 import com.google.devrel.training.conference.Constants;
 import com.google.devrel.training.conference.domain.Conference;
@@ -26,7 +26,6 @@ import com.google.devrel.training.conference.form.ProfileForm;
 import com.google.devrel.training.conference.form.ProfileForm.TeeShirtSize;
 import com.google.devrel.training.conference.service.OfyService;
 import com.googlecode.objectify.Key;
-import com.googlecode.objectify.ObjectifyService;
 import com.googlecode.objectify.Work;
 
 /**
@@ -77,16 +76,18 @@ public class ConferenceApi {
 
 		// Set the teeShirtSize to the value sent by the ProfileForm, if sent
 		// otherwise leave it as the default value
-		if (prof_form != null && prof_form.getTeeShirtSize() != null) {
-			teeShirtSize = prof_form.getTeeShirtSize();
+		if (prof_form != null) {
+			if (prof_form.getTeeShirtSize() != null)
+				teeShirtSize = prof_form.getTeeShirtSize();
 		}
 
 		// Set the displayName to the value sent by the ProfileForm, if sent
 		// otherwise set it to null
-		if (prof_form != null && prof_form.getDisplayName() != null)
+		if (prof_form != null && prof_form.getDisplayName() != null) {
 			displayName = prof_form.getDisplayName();
-		else
+		} else {
 			displayName = null;
+		}
 
 		// Get the userId and mainEmail
 		userId = user.getUserId();
@@ -99,13 +100,18 @@ public class ConferenceApi {
 		// userId, displayName, mainEmail and teeShirtSize
 		Profile profile = getProfile(user);
 		if (profile == null) {
-			if (displayName == null)
+			if (displayName == null) {
 				displayName = extractDefaultDisplayNameFromEmail(mainEmail);
+			}
 			profile = new Profile(userId, displayName, mainEmail, teeShirtSize);
 		} else {
+			if (displayName == null) {
+				displayName = "Your Name Here";
+			}
 			profile.update(displayName, teeShirtSize);
-		} // (In Lesson 3)
-			// Save the Profile entity in the datastore
+		}
+		// (In Lesson 3)
+		// Save the Profile entity in the datastore
 		ofy().save().entity(profile).now();
 
 		// Return the profile
@@ -130,7 +136,7 @@ public class ConferenceApi {
 
 		// load the Profile Entity
 		String userId = user.getUserId();
-		Key key = Key.create(Profile.class, userId);
+		Key<Profile> key = Key.create(Profile.class, userId);
 		Profile profile = (Profile) ofy().load().key(key).now(); // load the Profile entity
 		return profile;
 	}
@@ -196,7 +202,7 @@ public class ConferenceApi {
 		Conference conference = new Conference(conferenceId, userId, conferenceForm);
 
 		// Save Conference and Profile Entities
-		ofy().save().entities(profile, conference).now();
+		ofy().save().entities(conference, profile);
 
 		return conference;
 	}
@@ -215,16 +221,21 @@ public class ConferenceApi {
 	}
 
 	@ApiMethod(name = "getConferencesCreated", path = "getConferencesCreated", httpMethod = HttpMethod.POST)
-	public List<Conference> getConferencesCreated(final User user) throws UnauthorizedException, NotFoundException {
+	public List<Conference> getConferencesCreated(final User user) throws UnauthorizedException {
 		if (user == null) {
 			throw new UnauthorizedException("Authorization required");
 		}
-		Profile profile = getProfile(user);
-		if (profile == null) {
-			throw new NotFoundException("Profile doesn't exist.");
-		}
 		Query<Conference> query = ofy().load().type(Conference.class)
-				.ancestor(Key.create(Profile.class, user.getUserId())).order("name");
+				.ancestor(Key.create(Profile.class, user.getUserId()));
+		return query.list();
+	}
+
+	@ApiMethod(name = "getConferencesFiltered", path = "getConferencesFiltered", httpMethod = HttpMethod.POST)
+	public List<Conference> getConferencesFiltered() {
+		Query<Conference> query = ofy().load().type(Conference.class);
+		query = query.filter("maxAttendees >", 10);
+		query = query.filter("topics =", "Web Technologies");
+		query = query.filter("month =", 1).order("maxAttendees").order("name");
 		return query.list();
 	}
 
@@ -304,6 +315,7 @@ public class ConferenceApi {
 		// Get the userId
 		final String userId = user.getUserId();
 
+		// TODO
 		// Start transaction
 		WrappedBoolean result = ofy().transact(new Work<WrappedBoolean>() {
 
@@ -312,10 +324,10 @@ public class ConferenceApi {
 				try {
 					// Get the conference key -- you can get it from websafeConferenceKey
 					// Will throw ForbiddenException if the key cannot be created
-					Key<Conference> conferenceKey = Key.create(Conference.class, websafeConferenceKey);
+					Key<Conference> conferenceKey = Key.create(websafeConferenceKey);
 
 					// Get the Conference entity from the datastore
-					Conference conference = ofy().load().key(conferenceKey).now();
+					Conference conference = getConference(websafeConferenceKey);
 
 					// 404 when there is no Conference with the given conferenceId.
 					if (conference == null) {
@@ -342,17 +354,17 @@ public class ConferenceApi {
 						conference.bookSeats(1);
 
 						// Save the Conference and Profile entities
-						ofy().save().entities(profile, conference).now();
+						ofy().save().entities(conference, profile);
 
 						// We are booked!
 						return new WrappedBoolean(true, "Registration successful");
 					}
-				}catch (Exception e) {
+
+				} catch (Exception e) {
 					return new WrappedBoolean(false, "Unknown exception");
 				}
 			}
 		});
-
 		// if result is false
 		if (!result.getResult()) {
 			if (result.getReason().contains("No Conference found with key")) {
@@ -397,21 +409,76 @@ public class ConferenceApi {
 		// Iterate over keyStringsToAttend,
 		// and return a Collection of the
 		// Conference entities that the user has registered to atend
-
-		List<Conference> conferencesToAttend = new ArrayList<>(0);
+		List<Conference> result = new ArrayList<Conference>(0);
 		for (String key : keyStringsToAttend) {
-			conferencesToAttend.add(getConference(key));
+			result.add(getConference(key));
 		}
-		return conferencesToAttend; // change this
+		return result; // change this
 	}
 
-	@ApiMethod(name = "getConferencesFiltered", path = "getConferencesFiltered", httpMethod = HttpMethod.POST)
-	public List<Conference> getConferencesFiltered() {
-		Query<Conference> query = ofy().load().type(Conference.class);
-		query = query.filter("maxAttendees >", 10);
-		query = query.filter("city =", "London");
-		query = query.filter("topics =", "Web Technologies");
-		query = query.filter("month =", 1).order("maxAttendees").order("name");
-		return query.list();
+	/**
+	 * Unregister from the specified Conference. *
+	 * 
+	 * @param user
+	 *            An user who invokes this method, null when the user is not signed
+	 *            in.
+	 * @param websafeConferenceKey
+	 *            The String representation of the Conference Key to unregister
+	 *            from.
+	 * @return Boolean true when success, otherwise false.
+	 * @throws UnauthorizedException
+	 *             when the user is not signed in.
+	 * @throws NotFoundException
+	 *             when there is no Conference with the given conferenceId.
+	 */
+	@ApiMethod(name = "unregisterFromConference", path = "conference/{websafeConferenceKey}/registration", httpMethod = HttpMethod.DELETE)
+	public WrappedBoolean unregisterFromConference(final User user,
+			@Named("websafeConferenceKey") final String websafeConferenceKey)
+			throws UnauthorizedException, NotFoundException, ForbiddenException, ConflictException {
+		if (user == null) {
+			throw new UnauthorizedException("Authorization required");
+		}
+		WrappedBoolean result = ofy().transact(new Work<WrappedBoolean>() {
+			@Override
+			public WrappedBoolean run() {
+				try {
+					Conference conference = getConference(websafeConferenceKey);
+
+					if (conference == null) {
+						return new WrappedBoolean(false, "No Conference found with key: " + websafeConferenceKey);
+					}
+
+					Profile profile = getProfile(user);
+
+					if (!profile.getConferenceKeysToAttend().contains(websafeConferenceKey)) {
+						return new WrappedBoolean(false, "Already unregistered");
+					} else {
+						profile.unregisterFromConference(websafeConferenceKey);
+
+						conference.bookSeats(-1);
+
+						ofy().save().entities(conference, profile);
+
+						return new WrappedBoolean(true, "Unregistration successful");
+					}
+
+				} catch (Exception e) {
+					return new WrappedBoolean(false, "Unknown exception");
+				}
+			}
+		});
+		if (!result.getResult()) {
+			if (result.getReason().contains("No Conference found with key")) {
+				throw new NotFoundException(result.getReason());
+			} else if (result.getReason() == "Already unregistered") {
+				throw new ConflictException("You have already unregistered");
+			} else if (result.getReason() == "No seats available") {
+				throw new ConflictException("There are no seats available");
+			} else {
+				throw new ForbiddenException("Unknown exception");
+			}
+		}
+		return result;
 	}
+
 }
