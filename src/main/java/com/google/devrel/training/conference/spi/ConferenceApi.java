@@ -16,8 +16,14 @@ import com.google.api.server.spi.response.ConflictException;
 import com.google.api.server.spi.response.ForbiddenException;
 import com.google.api.server.spi.response.NotFoundException;
 import com.google.api.server.spi.response.UnauthorizedException;
+import com.google.appengine.api.memcache.MemcacheService;
+import com.google.appengine.api.memcache.MemcacheServiceFactory;
+import com.google.appengine.api.taskqueue.Queue;
+import com.google.appengine.api.taskqueue.QueueFactory;
+import com.google.appengine.api.taskqueue.TaskOptions;
 import com.google.appengine.api.users.User;
 import com.google.devrel.training.conference.Constants;
+import com.google.devrel.training.conference.domain.Announcement;
 import com.google.devrel.training.conference.domain.Conference;
 import com.google.devrel.training.conference.domain.Profile;
 import com.google.devrel.training.conference.form.ConferenceForm;
@@ -201,6 +207,10 @@ public class ConferenceApi {
 		// as the parent of the conference
 		Conference conference = new Conference(conferenceId, userId, conferenceForm);
 
+		Queue queue = QueueFactory.getDefaultQueue();
+		queue.add(TaskOptions.Builder.withUrl("/sndem/*").param("email", user.getEmail()).param("conferenceInfo",
+				conference.getDescription()));
+
 		// Save Conference and Profile Entities
 		ofy().save().entities(conference, profile);
 
@@ -233,9 +243,7 @@ public class ConferenceApi {
 	@ApiMethod(name = "getConferencesFiltered", path = "getConferencesFiltered", httpMethod = HttpMethod.POST)
 	public List<Conference> getConferencesFiltered() {
 		Query<Conference> query = ofy().load().type(Conference.class);
-		query = query.filter("maxAttendees >", 10);
-		query = query.filter("topics =", "Web Technologies");
-		query = query.filter("month =", 1).order("maxAttendees").order("name");
+		query = query.filter("seatsAvailable <", 5).order("seatsAvailable").order("name");
 		return query.list();
 	}
 
@@ -481,4 +489,11 @@ public class ConferenceApi {
 		return result;
 	}
 
+	@ApiMethod(name = "getAnnouncement", path = "announcement", httpMethod = HttpMethod.GET)
+	public Announcement getAnnouncement() throws NotFoundException {
+		// TODO GET announcement from memcache by key if it exist return it
+		MemcacheService memcacheService = MemcacheServiceFactory.getMemcacheService();
+		String message = (String) memcacheService.get(Constants.MEMCACHE_ANNOUNCEMENTS_KEY);
+		return new Announcement(message);
+	}
 }
